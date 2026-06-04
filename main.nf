@@ -21,7 +21,7 @@ include { brainregEnvInstall;
           downloadAtlas;
           organizeChannelsForBrainreg } from './modules/brainreg'
 
-include { omeZarrEnvInstall; convertTiffToOmeZarr; publishOmeZarr } from './modules/ome_zarr'
+include { omeZarrEnvInstall; convertTiffToOmeZarr; publishOmeZarr; stageFusedCh1 } from './modules/ome_zarr'
 
 // Helper function to ensure parameter is a list
 def ensureList(param) {
@@ -482,4 +482,40 @@ workflow {
 
     copyResultsToImageFolder(result_and_paths)
 
+}
+
+// OME-Zarr-only entry point: skip stitching/fusion/brainreg entirely and convert
+// already-fused ch1 TIFFs (published under <output_base_path>/<user_name>/<key>/ch1/)
+// straight to OME-Zarr on local cluster storage.
+//
+// Usage:
+//   nextflow run main.nf -entry omeZarrOnly -profile slurm \
+//       --brain_id MS190,MS191,MS192 --user_name Lana_Smith
+workflow omeZarrOnly {
+    if (!params.brain_id) {
+        error "omeZarrOnly requires --brain_id (comma-separated, e.g. --brain_id MS190,MS191)"
+    }
+    if (!params.user_name) {
+        error "omeZarrOnly requires --user_name (e.g. --user_name Lana_Smith)"
+    }
+
+    def keys = params.brain_id.split(',').collect { it.trim() }
+    log.info "OME-Zarr-only conversion for: ${keys.join(', ')} (user: ${params.user_name})"
+
+    // Stage the already-fused ch1 TIFF for each brain from the remote analysis tree
+    stage_inputs = Channel.fromList(keys).map { key ->
+        def remote_ch1_dir = "${params.output_base_path}/${params.user_name}/${key}/ch1"
+        tuple(key, params.ssh_host, remote_ch1_dir)
+    }
+    staged = stageFusedCh1(stage_inputs)
+
+    // Pair each staged TIFF with its target zarr path
+    convert_inputs = staged.staged.map { key, ch1_tiff ->
+        def zarr_path = "${params.ome_zarr_output_base}/${params.user_name}/${key}/ch1.ome.zarr"
+        tuple(key, ch1_tiff, zarr_path)
+    }
+
+    ome_zarr_env = omeZarrEnvInstall()
+    convertTiffToOmeZarr(ome_zarr_env, convert_inputs)
+    publishOmeZarr(convertTiffToOmeZarr.out.zarr_result)
 }
