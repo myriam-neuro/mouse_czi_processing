@@ -16,7 +16,6 @@ process omeZarrEnvInstall {
 
 process stageFusedCh1 {
     tag "stage fused ch1 ${brain_key}"
-    maxForks 1  // serialize haas<->cluster transfers to avoid bandwidth/disk contention
 
     input:
     tuple val(brain_key), val(ssh_host), val(remote_ch1_dir)
