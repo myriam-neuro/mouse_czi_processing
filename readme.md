@@ -96,28 +96,43 @@ This automatically constructs paths based on the data layout:
 
 The `ssh_host`, `input_base_path`, and `output_base_path` are configured in `nextflow.config` and rarely need overriding.
 
-### OME-Zarr Export (optional)
+### Pipeline steps and skip flags
 
-To additionally convert the fused ch1 channel to a multi-resolution OME-Zarr pyramid, add the `--export_ome_zarr` flag:
+By default the pipeline runs **all** steps: stitch → fuse → publish results to NAS → OME-Zarr → spotiflow → registration → publish registration. Each step can be turned off with a `--skip_*` flag:
+
+| Flag | Skips |
+|---|---|
+| `--skip_results_transfer` | publishing the XMLs + fused channel TIFFs to the NAS |
+| `--skip_ome_zarr` | the ch1 → OME-Zarr conversion (and therefore spotiflow) |
+| `--skip_spotiflow` | the spotiflow GPU spot detection on Kuma |
+| `--skip_registration` | the brainreg registration (stops after fusion) |
+| `--skip_registration_transfer` | copying the registration results to the NAS |
 
 ```bash
-nextflow run main.nf -resume -profile slurm --brain_id MS181 --user_name Lana_Smith --export_ome_zarr -with-trace
+# Default: everything runs
+nextflow run main.nf -resume -profile slurm --brain_id MS181 --user_name Lana_Smith -with-trace
+
+# Stitch + fuse only — no NAS transfers, no zarr/spotiflow, no registration
+nextflow run main.nf -resume -profile slurm --brain_id MS181 --user_name Lana_Smith \
+  --skip_results_transfer --skip_ome_zarr --skip_registration -with-trace
 ```
 
-This writes the OME-Zarr to the local cluster storage at `<ome_zarr_output_base>/<user_name>/<brain_id>/ch1.ome.zarr` (e.g. `/work/lsens/Lana_Smith/...`). The export is disabled by default.
+### OME-Zarr Export
+
+The fused ch1 channel is converted to a multi-resolution OME-Zarr pyramid by default (skip with `--skip_ome_zarr`). It is written to local cluster storage at `<ome_zarr_output_base>/<user_name>/<brain_id>/ch1.ome.zarr` (e.g. `/work/lsens/Lana_Smith/...`).
 
 ### Spotiflow Spot Detection (GPU, on the Kuma cluster)
 
-When OME-Zarr export is enabled, the pipeline runs [Spotiflow](https://github.com/weigertlab/spotiflow) spot detection on the ch1 OME-Zarr. Spotiflow needs GPUs, and SCITAS **Jed has none**, so this step runs on the **Kuma** GPU cluster (`h100`): the Jed-side Nextflow process submits an `sbatch` job to Kuma over SSH and waits for it to finish. Input and output both live on the shared `/work` filesystem, so no data is copied between clusters.
+The pipeline runs [Spotiflow](https://github.com/weigertlab/spotiflow) spot detection on the ch1 OME-Zarr. Spotiflow needs GPUs, and SCITAS **Jed has none**, so this step runs on the **Kuma** GPU cluster (`h100`): the Jed-side Nextflow process submits an `sbatch` job to Kuma over SSH and waits for it to finish. Input and output both live on the shared `/work` filesystem, so no data is copied between clusters.
 
-It runs **automatically after `publishOmeZarr`** (whenever `--export_ome_zarr` is set) and is toggled with `--run_spotiflow` (default `true`):
+It runs **by default after `publishOmeZarr`**. Skip it with `--skip_spotiflow` (or skip the whole OME-Zarr branch with `--skip_ome_zarr`):
 
 ```bash
-# Spotiflow runs automatically with OME-Zarr export
-nextflow run main.nf -resume -profile slurm --brain_id MS181 --user_name Lana_Smith --export_ome_zarr -with-trace
+# Default: spotiflow runs after the OME-Zarr is published
+nextflow run main.nf -resume -profile slurm --brain_id MS181 --user_name Lana_Smith -with-trace
 
-# Disable spotiflow for a run
-nextflow run main.nf -resume -profile slurm --brain_id MS181 --user_name Lana_Smith --export_ome_zarr --run_spotiflow false
+# Skip spotiflow for a run
+nextflow run main.nf -resume -profile slurm --brain_id MS181 --user_name Lana_Smith --skip_spotiflow -with-trace
 ```
 
 Predictions are written to `<ome_zarr_output_base>/<user_name>/detection_results/<spotiflow_version>/<brain_id>/`.
@@ -126,7 +141,6 @@ Predictions are written to `<ome_zarr_output_base>/<user_name>/detection_results
 
 | Param | Default | Purpose |
 |---|---|---|
-| `run_spotiflow` | `true` | Run spotiflow after the OME-Zarr is published |
 | `kuma_host` | `<user>@kuma.hpc.epfl.ch` | SSH target for the GPU cluster |
 | `spotiflow_version` | `spotiflow_lsfm_v6_scratch_preds` | Output subfolder (version label) |
 | `spotiflow_model` | `spotiflow_scratch_annotated_clean_...` | Model directory name under `models_dir` |
@@ -164,13 +178,13 @@ This stages the CZI file and extracts the original voxel sizes using Bio-Formats
 
 Useful for verifying anisotropy handling before running the full pipeline.
 
-### Fusion Only (stop before brainreg registration)
+### Skip Registration (stop after fusion)
 
 ```bash
-nextflow run main.nf -resume -profile slurm --brain_id BIOP_TEST --user_name Biop_User --fusion_only
+nextflow run main.nf -resume -profile slurm --brain_id BIOP_TEST --user_name Biop_User --skip_registration
 ```
 
-Runs the full pipeline through stitching and fusion but stops before brainreg registration. Useful for inspecting fused output (voxel sizes, orientation) before committing to the registration step.
+Runs the pipeline through stitching and fusion but skips brainreg registration. Useful for inspecting fused output (voxel sizes, orientation) before committing to the registration step. (Combine with `--skip_ome_zarr` to also skip the OME-Zarr/spotiflow branch.)
 
 ### Local Execution
 

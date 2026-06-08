@@ -100,7 +100,7 @@ workflow {
                     log.info "    XML:          ${output_base}/${key}_unregistered.xml"
                     log.info "    XML:          ${output_base}/${key}_registered.xml"
                     log.info "    Channels:     ${output_base}/ch0/, ch1/, ..."
-                    if (params.export_ome_zarr) {
+                    if (!params.skip_ome_zarr) {
                         log.info "    OME-Zarr:     ${params.ome_zarr_output_base}/${params.user_name}/${key}/ch1.ome.zarr"
                     }
                     log.info "    Registration: ${output_base}/registration/${key}_<param_combo>/"
@@ -260,7 +260,9 @@ workflow {
     }
 
     // Publish XML files to output locations
-    publishInitialXmlToSource(xml_not_stitched_with_original_paths)
+    if (!params.skip_results_transfer) {
+        publishInitialXmlToSource(xml_not_stitched_with_original_paths)
+    }
 
     // Channel alignment
     channel_aligned = alignChannelsWithBigstitcher(makeCziDatasetForBigstitcher.out, fiji_path, params.bigstitcher)
@@ -301,7 +303,9 @@ workflow {
     }
 
     // Publish XML files to output locations
-    publishStitchedXmlToSource(xml_with_original_paths)
+    if (!params.skip_results_transfer) {
+        publishStitchedXmlToSource(xml_with_original_paths)
+    }
 
     // Join XML with per-axis downsample factors for fusion
     xml_out_with_ds = xml_out
@@ -325,7 +329,7 @@ workflow {
     )
 
     // Publish fused channel TIFFs to analysis output (ch0/, ch1/, etc.)
-    if (params.user_name) {
+    if (params.user_name && !params.skip_results_transfer) {
         fused_with_keys = fused_images.named_fused_images
             .map { base_name, channel_files ->
                 def key = PathUtils.getBaseKey(base_name)
@@ -342,7 +346,7 @@ workflow {
     }
 
     // Convert ch1 fused TIFF to OME-Zarr on local cluster storage
-    if (params.export_ome_zarr && params.user_name) {
+    if (!params.skip_ome_zarr && params.user_name) {
         // Extract ch1 file from fused images and pair with brain key
         ch1_for_zarr = fused_images.named_fused_images
             .map { base_name, channel_files ->
@@ -363,7 +367,7 @@ workflow {
 
         // Spotiflow spot detection on Kuma (GPU), automatically after the
         // OME-Zarr is published to the shared /work filesystem.
-        if (params.run_spotiflow) {
+        if (!params.skip_spotiflow) {
             spotiflow_input = publishOmeZarr.out.published
                 .map { key, zarr ->
                     def out_dir = "${params.ome_zarr_output_base}/${params.user_name}/detection_results/${params.spotiflow_version}/${key}"
@@ -373,10 +377,10 @@ workflow {
         }
     }
 
-    // Stop here if fusion_only mode
-    if (params.fusion_only) {
+    // Stop here if registration is skipped
+    if (params.skip_registration) {
         log.info "========================================="
-        log.info "  FUSION ONLY - Skipping brainreg"
+        log.info "  SKIP REGISTRATION - stopping after fusion"
         log.info "========================================="
         return
     }
@@ -492,7 +496,9 @@ workflow {
             tuple(key, output_path, combo, result_files, original_path)
         }
 
-    copyResultsToImageFolder(result_and_paths)
+    if (!params.skip_registration_transfer) {
+        copyResultsToImageFolder(result_and_paths)
+    }
 
 }
 
